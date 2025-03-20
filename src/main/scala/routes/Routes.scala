@@ -28,16 +28,28 @@ object Routes extends LazyLogging {
       },
       path("test") {
         get {
-          val zoneId = "8c9992999dc0c6147066da85d5ce85c7"
           val startTime = "2025-03-19T16:00:00Z"
           val endTime = "2025-03-19T17:00:00Z"
 
-          onComplete(CloudFlareGraphiQl.fetchFirewallEvents(zoneId, startTime, endTime)) {
-            case Success(json) =>
-              complete(HttpEntity(ContentTypes.`application/json`, json.spaces2))
+          onComplete(CloudFlareApi.getZones()) {
+            case Success(zones) =>
+              val zoneIds = zones.map(_("zoneId"))
+
+              if (zoneIds.nonEmpty) {
+                onComplete(CloudFlareGraphiQl.fetchFirewallEventsForZones(zoneIds, startTime, endTime)) {
+                  case Success(json) =>
+                    complete(HttpEntity(ContentTypes.`application/json`, json.spaces2))
+                  case Failure(exception) =>
+                    logger.error("Failed to fetch aggregated firewall events", exception)
+                    complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching aggregated firewall events"))
+                }
+              } else {
+                complete(HttpResponse(StatusCodes.BadRequest, entity = "No active zones found"))
+              }
+
             case Failure(exception) =>
-              logger.error("Failed to fetch firewall events", exception)
-              complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching firewall events"))
+              logger.error("Failed to fetch zones", exception)
+              complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching zones"))
           }
         }
       },
