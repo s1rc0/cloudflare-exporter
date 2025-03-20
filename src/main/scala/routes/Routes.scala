@@ -1,9 +1,10 @@
-package com.monitoring.cloudflare.routes
+package com.monitoring.cloudflare
+package routes
 
 import org.apache.pekko.http.scaladsl.model._
 import org.apache.pekko.http.scaladsl.server.Directives._
 import org.apache.pekko.http.scaladsl.server.Route
-import com.monitoring.cloudflare.utils.CloudFlareApi
+import utils.CloudFlareApi
 import io.circe.syntax._
 import scala.util.{Success, Failure}
 import scala.concurrent.ExecutionContext

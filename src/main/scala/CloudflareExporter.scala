@@ -7,13 +7,13 @@ import pekko.http.scaladsl.Http
 import scala.util.{Failure, Success}
 import scala.concurrent.ExecutionContextExecutor
 import routes.Routes
-import utils.CloudFlareConfig
+import utils.Config
 import com.typesafe.scalalogging.LazyLogging
 
 object CloudflareExporter extends LazyLogging {
 
   def main(args: Array[String]): Unit = {
-    CloudFlareConfig.validate()
+    Config.validate()
 
     implicit val system: ActorSystem[Nothing] = ActorSystem(Behaviors.empty, "CloudflareExporterSystem")
     implicit val executionContext: ExecutionContextExecutor = system.executionContext

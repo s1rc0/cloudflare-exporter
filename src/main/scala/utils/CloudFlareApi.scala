@@ -6,12 +6,11 @@ import io.circe.Json
 import io.circe.parser._
 import io.circe.syntax._
 import scala.concurrent.{Future, ExecutionContext}
-import scala.util.{Success, Failure}
 import com.typesafe.scalalogging.LazyLogging
 
 object CloudFlareApi extends LazyLogging {
 
-  CloudFlareConfig.validate()
+  Config.validate()
 
   implicit val backend: SttpBackend[Identity, Any] = HttpURLConnectionBackend()
 
@@ -44,9 +43,9 @@ object CloudFlareApi extends LazyLogging {
          |""".stripMargin
 
     val request = basicRequest
-      .post(uri"${CloudFlareConfig.graphqlEndpoint}")
-      .header("Authorization", s"Bearer ${CloudFlareConfig.apiToken}")
-      .header("X-AUTH-EMAIL", CloudFlareConfig.authEmail)
+      .post(uri"${Config.graphqlEndpoint}")
+      .header("Authorization", s"Bearer ${Config.apiToken}")
+      .header("X-AUTH-EMAIL", Config.authEmail)
       .header("Content-Type", "application/json")
       .body(Map("query" -> query).asJson.noSpaces)
       .response(asString)

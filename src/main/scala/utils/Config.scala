@@ -1,15 +1,11 @@
 package com.monitoring.cloudflare
 package utils
 
-import sys.env
 import com.typesafe.scalalogging.LazyLogging
-import sttp.client3._
-import io.circe.Json
-import io.circe.parser._
-import io.circe.syntax._
-import scala.util.{Try, Success, Failure}
 
-object CloudFlareConfig extends LazyLogging {
+import scala.sys.env
+
+object Config extends LazyLogging {
   val apiToken: String = env.getOrElse("CLOUDFLARE_API_TOKEN", "")
   val authEmail: String = env.getOrElse("CLOUDFLARE_AUTH_EMAIL", "")
   val accountId: String = env.getOrElse("CLOUDFLARE_ACCOUNT_ID", "")
