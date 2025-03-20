@@ -22,7 +22,7 @@ object CloudFlareGraphiQl extends LazyLogging {
       return Future.successful(Json.obj("data" -> Json.arr()))
     }
 
-    val batchSize = 3  // Adjust this if necessary based on Cloudflare's limits
+    val batchSize = 10  // Adjust this if necessary based on Cloudflare's limits
     val zoneBatches = validZones.grouped(batchSize).toList
 
     val futureResponses = Future.sequence(zoneBatches.map { batch =>
