@@ -7,10 +7,14 @@ import pekko.http.scaladsl.Http
 import scala.util.{Failure, Success}
 import scala.concurrent.ExecutionContextExecutor
 import routes.Routes
+import utils.CloudFlareConfig
+import com.typesafe.scalalogging.LazyLogging
 
-object CloudflareExporter {
+object CloudflareExporter extends LazyLogging {
 
   def main(args: Array[String]): Unit = {
+    CloudFlareConfig.validate()
+
     implicit val system: ActorSystem[Nothing] = ActorSystem(Behaviors.empty, "CloudflareExporterSystem")
     implicit val executionContext: ExecutionContextExecutor = system.executionContext
 
@@ -18,9 +22,9 @@ object CloudflareExporter {
 
     bindingFuture.onComplete {
       case Success(binding) =>
-        println(s"Server online at http://${binding.localAddress.getHostString}:${binding.localAddress.getPort}/")
+        logger.info(s"Server online at http://${binding.localAddress.getHostString}:${binding.localAddress.getPort}/")
       case Failure(exception) =>
-        println(s"Failed to bind HTTP server: ${exception.getMessage}")
+        logger.error(s"Failed to bind HTTP server: ${exception.getMessage}", exception)
         system.terminate()
     }
   }

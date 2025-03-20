@@ -1,9 +1,7 @@
 <configuration>
-    <!-- This is a development logging configuration that logs to standard out, for an example of a production
-        logging config, see the Pekko docs: https://pekko.apache.org/docs/pekko/current/typed/logging.html#logback -->
     <appender name="STDOUT" target="System.out" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>[%date{ISO8601}] [%level] [%logger] [%thread] [%X{pekkoSource}] - %msg%n</pattern>
+            <pattern>[%date{ISO8601}] [%level] [%logger{36}] [%thread] - %msg%n</pattern>
         </encoder>
     </appender>
 
@@ -13,8 +11,9 @@
         <appender-ref ref="STDOUT" />
     </appender>
 
+    <logger name="com.monitoring.cloudflare" level="DEBUG"/>
+
     <root level="INFO">
         <appender-ref ref="ASYNC"/>
     </root>
-
 </configuration>
