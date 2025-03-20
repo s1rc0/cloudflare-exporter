@@ -36,27 +36,30 @@ object CloudFlareApi extends LazyLogging {
                 val cursor = json.hcursor
                 val zones = cursor.downField("result").as[List[Map[String, Json]]].getOrElse(List())
 
-                val activeZones = zones.collect {
-                  case zone if zone.get("status").contains(Json.fromString("active")) =>
-                    val accountId = zone.get("account").flatMap(_.hcursor.get[String]("id").toOption).getOrElse("")
-                    val accountName = zone.get("account").flatMap(_.hcursor.get[String]("name").toOption).getOrElse("")
-                    val zoneId = zone.get("id").flatMap(_.asString).getOrElse("")
-                    val zoneName = zone.get("name").flatMap(_.asString).getOrElse("")
-                    Map(
-                      "accountId" -> accountId,
-                      "accountName" -> accountName,
-                      "zoneId" -> zoneId,
-                      "zoneName" -> zoneName
-                    )
+                val filteredZones = zones.flatMap { zone =>
+                  if (zone.get("status").contains(Json.fromString("active"))) {
+                    val accountId = zone.get("account").flatMap(_.hcursor.downField("id").as[String].toOption)
+                    if (Config.accountIds.isEmpty || accountId.exists(Config.accountIds.contains)) {
+                      val accountName = zone.get("account").flatMap(_.hcursor.get[String]("name").toOption).getOrElse("")
+                      val zoneId = zone.get("id").flatMap(_.asString).getOrElse("")
+                      val zoneName = zone.get("name").flatMap(_.asString).getOrElse("")
+                      Some(Map(
+                        "accountId" -> accountId.getOrElse(""),
+                        "accountName" -> accountName,
+                        "zoneId" -> zoneId,
+                        "zoneName" -> zoneName
+                      ))
+                    } else None
+                  } else None
                 }
 
-                logger.info(s"Active Zones Extracted: ${activeZones.mkString(", ")}")
+                logger.info(s"Filtered Zones Extracted: ${filteredZones.mkString(", ")}")
 
                 val totalPages = cursor.downField("result_info").downField("total_pages").as[Int].getOrElse(1)
                 if (page < totalPages) {
-                  fetchPage(page + 1).map(nextPage => activeZones ++ nextPage)
+                  fetchPage(page + 1).map(nextPage => filteredZones ++ nextPage)
                 } else {
-                  Future.successful(activeZones)
+                  Future.successful(filteredZones)
                 }
 
               case Left(parseError) =>
