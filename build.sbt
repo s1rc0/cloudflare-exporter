@@ -1,9 +1,18 @@
+import sbtassembly.AssemblyPlugin.autoImport._
+
 val PekkoVersion = "1.1.2"
 val PekkoHttpVersion = "1.1.0"
 
 ThisBuild / version := "0.1.0-SNAPSHOT"
 
 ThisBuild / scalaVersion := "2.13.16"
+
+assembly / mainClass := Some("com.monitoring.cloudflare.CloudflareExporter")
+
+assemblyMergeStrategy in assembly := {
+  case PathList("module-info.class") => MergeStrategy.discard
+  case x => (assemblyMergeStrategy in assembly).value(x)
+}
 
 lazy val root = (project in file("."))
   .settings(
@@ -23,5 +32,3 @@ libraryDependencies ++= Seq(
   "io.circe" %% "circe-generic" % "0.14.5",
   "io.circe" %% "circe-parser" % "0.14.5"
 )
-
-assembly / mainClass := Some("com.monitoring.cloudflare.CloudflareExporter")
