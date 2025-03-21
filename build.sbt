@@ -23,3 +23,5 @@ libraryDependencies ++= Seq(
   "io.circe" %% "circe-generic" % "0.14.5",
   "io.circe" %% "circe-parser" % "0.14.5"
 )
+
+assembly / mainClass := Some("com.monitoring.cloudflare.CloudflareExporter")
