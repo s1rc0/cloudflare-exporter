@@ -1,11 +1,17 @@
 # Dockerfile
+
 FROM eclipse-temurin:17-jdk-alpine as builder
 
 WORKDIR /app
 
+# Install sbt and other dependencies
+RUN apk add --no-cache curl bash zip && \
+    curl -Ls https://github.com/sbt/sbt/releases/download/v1.9.7/sbt-1.9.7.tgz | tar xz -C /usr/local && \
+    ln -s /usr/local/sbt/bin/sbt /usr/bin/sbt
+
 COPY . .
 
-RUN ./sbt clean assembly
+RUN sbt clean assembly
 
 # Final container
 FROM eclipse-temurin:17-jre-alpine
