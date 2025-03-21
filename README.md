@@ -37,12 +37,12 @@ cloudflare_top_ip_request_count{zone="example.com", action="block", source="fire
 
 ## ⚙️ Configuration
 
-| Environment Variable                  | Description                                      |
+| Environment Variable                 | Description                                      |
 |--------------------------------------|--------------------------------------------------|
 | `CLOUDFLARE_API_TOKEN`               | Cloudflare API token (required)                  |
 | `CLOUDFLARE_AUTH_EMAIL`              | Email associated with Cloudflare API token       |
 | `CLOUDFLARE_ACCOUNT_ID`              | Comma-separated list of allowed account IDs      |
-| `CLOUDFLARE_DISABLES_ZONES_FIREWALL` | Comma-separated list of zone IDs to exclude      |
+| `CLOUDFLARE_DISABLED_ZONES_FIREWALL` | Comma-separated list of zone IDs to exclude      |
 
 ## 🛠️ Development
 
