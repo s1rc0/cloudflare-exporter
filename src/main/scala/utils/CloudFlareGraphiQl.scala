@@ -96,4 +96,46 @@ object CloudFlareGraphiQl extends LazyLogging {
       }
     }
   }
+
+  def convertToPrometheusMetrics(json: Json): String = {
+    val cursor = json.hcursor
+    val zones = cursor.downField("data").as[Json].toOption.toList.flatMap(_.asArray.getOrElse(Vector.empty))
+    logger.debug("Raw JSON input to convertToPrometheusMetrics:\n" + json.spaces2)
+    logger.debug("Extracted top-level zones from JSON: " + zones.size)
+    zones.zipWithIndex.foreach { case (zoneJson, i) =>
+      logger.debug(s"Zone[$i] JSON: " + zoneJson.noSpaces)
+    }
+
+    val metricsBuilder = new StringBuilder
+
+    zones.foreach { zoneJson =>
+      val zoneCursor = zoneJson.hcursor
+    val nestedZones = zoneCursor.downField("data").downField("viewer").downField("zones").as[List[Json]].getOrElse(Nil)
+    logger.debug(s"Nested zones count: " + nestedZones.size)
+    nestedZones.foreach { nestedZone =>
+      val nestedCursor = nestedZone.hcursor
+      val zoneIdOpt = nestedCursor.get[String]("zoneId").toOption
+      val zoneNameOpt = nestedCursor.get[String]("zoneName").toOption
+      val topIpsList = nestedCursor.downField("topIPs").as[List[Json]].getOrElse(Nil)
+
+      for {
+        zoneId <- zoneIdOpt.toList
+        zoneName <- zoneNameOpt.toList
+        topIp <- topIpsList
+        count <- topIp.hcursor.get[Int]("count").toOption
+        action <- topIp.hcursor.downField("dimensions").get[String]("action").toOption
+        ruleId <- topIp.hcursor.downField("dimensions").get[String]("ruleId").toOption
+        source <- topIp.hcursor.downField("dimensions").get[String]("source").toOption
+      } {
+        logger.debug(s"Preparing to create metrics for zone=$zoneName, action=$action, count=$count")
+        val metricLine = s"""cloudflare_top_ip_request_count{zone="$zoneName", action="$action", source="$source", rule="$ruleId"} $count"""
+        metricsBuilder.append(metricLine + "\n")
+      }
+    }
+    }
+
+    logger.info(s"Generated metrics with length: ${metricsBuilder.length}")
+    logger.debug(s"Final Prometheus metrics:\n${metricsBuilder.toString}")
+    metricsBuilder.toString
+  }
 }

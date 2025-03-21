@@ -23,7 +23,28 @@ object Routes extends LazyLogging {
       },
       path("metrics") {
         get {
-          complete(HttpEntity(ContentTypes.`text/plain(UTF-8)`, "# Prometheus metrics will be exposed here"))
+          val startTime = java.time.Instant.now().minusSeconds(3600).toString
+          val endTime = java.time.Instant.now().toString
+
+          onComplete(CloudFlareApi.getZones()) {
+            case Success(zones) =>
+              if (zones.nonEmpty) {
+                onComplete(CloudFlareGraphiQl.fetchFirewallEventsForZones(zones, startTime, endTime)) {
+                  case Success(json) =>
+                    val metrics = CloudFlareGraphiQl.convertToPrometheusMetrics(json)
+                    complete(HttpEntity(ContentTypes.`text/plain(UTF-8)`, metrics))
+                  case Failure(exception) =>
+                    logger.error("Failed to fetch aggregated firewall events", exception)
+                    complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching metrics"))
+                }
+              } else {
+                complete(HttpResponse(StatusCodes.BadRequest, entity = "No active zones found"))
+              }
+
+            case Failure(exception) =>
+              logger.error("Failed to fetch zones", exception)
+              complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching zones"))
+          }
         }
       },
       path("test") {
