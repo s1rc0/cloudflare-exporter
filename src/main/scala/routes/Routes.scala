@@ -33,10 +33,9 @@ object Routes extends LazyLogging {
 
           onComplete(CloudFlareApi.getZones()) {
             case Success(zones) =>
-              val zoneIds = zones.map(_("zoneId"))
-
-              if (zoneIds.nonEmpty) {
-                onComplete(CloudFlareGraphiQl.fetchFirewallEventsForZones(zoneIds, startTime, endTime)) {
+              logger.info("Fetched zones successfully. Zones: " + zones.mkString(", "))
+              if (zones.nonEmpty) {
+                onComplete(CloudFlareGraphiQl.fetchFirewallEventsForZones(zones, startTime, endTime)) {
                   case Success(json) =>
                     complete(HttpEntity(ContentTypes.`application/json`, json.spaces2))
                   case Failure(exception) =>
