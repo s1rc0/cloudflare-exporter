@@ -12,9 +12,6 @@ object Config extends LazyLogging {
     .map(_.split(",").map(_.trim).toSet)
     .getOrElse(Set.empty)
   val graphqlEndpoint: String = "https://api.cloudflare.com/client/v4/graphql"
-  val disabledZonesFirewall: Set[String] = env.get("CLOUDFLARE_DISABLED_ZONES_FIREWALL")
-    .map(_.split(",").map(_.trim).toSet)
-    .getOrElse(Set.empty)
 
   def validate(): Unit = {
     if (apiToken.isEmpty || authEmail.isEmpty) {

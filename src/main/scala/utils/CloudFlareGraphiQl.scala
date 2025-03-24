@@ -1,5 +1,7 @@
 package com.monitoring.cloudflare
 package utils
+import actors.DispatcherActor
+import org.apache.pekko.actor.typed.ActorRef
 
 import sttp.client3._
 import io.circe.Json
@@ -14,19 +16,40 @@ object CloudFlareGraphiQl extends LazyLogging {
 
   implicit val backend: SttpBackend[Identity, Any] = HttpURLConnectionBackend()
 
-  def fetchFirewallEventsForZones(zones: List[Map[String, String]], startTime: String, endTime: String)
-                                 (implicit ec: ExecutionContext): Future[Json] = {
-    val validZones = zones.filterNot(z => Config.disabledZonesFirewall.contains(z("zoneId")))
-    if (validZones.isEmpty) {
-      logger.warn("No valid zones with firewall access found. Skipping request.")
-      return Future.successful(Json.obj("data" -> Json.arr()))
-    }
+  def fetchFirewallEventsForZones(
+                                   zones: List[Map[String, String]],
+                                   startTime: String,
+                                   endTime: String,
+                                   dispatcher: ActorRef[DispatcherActor.Command]
+                                 )(implicit ec: ExecutionContext): Future[Json] = {
+    val validZones = zones
 
     val futureResponses = Future.sequence(validZones.map { zone =>
-      val zoneId = zone("zoneId")
-      val zoneName = zone("zoneName")
-      fetchFirewallEvents(zoneId, startTime, endTime).map { json =>
-        json.hcursor.downField("data").downField("viewer").downField("zones").withFocus { zones =>
+      fetchFirewallEvents(zone, startTime, endTime).map { json =>
+        val zoneId = zone("zoneId")
+        val zoneName = zone.getOrElse("zoneName", "unknown")
+        val cursor = json.hcursor
+        val dataField = cursor.downField("data")
+        val errorsField = cursor.downField("errors")
+
+        val isErrorResponse = errorsField.focus.exists(_.isArray)
+        val hasOnlyErrors = isErrorResponse && dataField.focus.exists(_.isNull)
+
+        val errorCodes = errorsField.as[Vector[Json]].getOrElse(Vector.empty)
+          .flatMap(_.hcursor.downField("extensions").get[String]("code").toOption)
+
+        if (hasOnlyErrors) {
+          if (errorCodes.contains("authz")) {
+            logger.debug(s"❌ Zone $zoneId ($zoneName) returned authz error, removing from module 'firewall'")
+            dispatcher ! com.monitoring.cloudflare.actors.DispatcherActor.RemoveZone("firewall", zoneId)
+          } else if (errorCodes.contains("budget")) {
+            logger.error(s"⏳ Zone $zoneId ($zoneName) hit rate limit (budget), will retry later")
+          } else {
+            logger.error(s"⚠️ Zone $zoneId ($zoneName) returned unknown error codes: ${errorCodes.mkString(", ")}")
+          }
+        }
+
+        cursor.downField("data").downField("viewer").downField("zones").withFocus { zones =>
           zones.mapArray(_.map { zoneJson =>
             val withId = zoneJson.mapObject(_.add("zoneId", Json.fromString(zoneId)))
             withId.mapObject(_.add("zoneName", Json.fromString(zoneName)))
@@ -40,8 +63,10 @@ object CloudFlareGraphiQl extends LazyLogging {
     }
   }
 
-  private def fetchFirewallEvents(zoneId: String, startTime: String, endTime: String)
+  private def fetchFirewallEvents(zone: Map[String, String], startTime: String, endTime: String)
                                  (implicit ec: ExecutionContext): Future[Json] = {
+    val zoneId = zone("zoneId")
+    val zoneName = zone.getOrElse("zoneName", "unknown")
     val query =
       s"""
          |{
@@ -76,7 +101,7 @@ object CloudFlareGraphiQl extends LazyLogging {
       .body(Map("query" -> query).asJson.noSpaces)
       .response(asString)
 
-    logger.info(s"Sending GraphQL request to Cloudflare for zone: $zoneId")
+    logger.debug(s"Sending GraphQL request to Cloudflare for zone: $zoneId ($zoneName)")
 
     Future {
       val response = request.send(backend)
@@ -84,7 +109,7 @@ object CloudFlareGraphiQl extends LazyLogging {
         case Right(jsonStr) =>
           parse(jsonStr) match {
             case Right(json) =>
-              logger.info("Successfully retrieved firewall events for zone: " + zoneId + ": " + json.noSpaces)
+              logger.debug("Successfully retrieved firewall events for zone: " + zoneId + ": " + json.noSpaces)
               json
             case Left(parseError) =>
               logger.error("Failed to parse Cloudflare GraphQL response", parseError)
@@ -100,7 +125,7 @@ object CloudFlareGraphiQl extends LazyLogging {
   def convertToPrometheusMetrics(json: Json): String = {
     val cursor = json.hcursor
     val zones = cursor.downField("data").as[Json].toOption.toList.flatMap(_.asArray.getOrElse(Vector.empty))
-    logger.debug("Raw JSON input to convertToPrometheusMetrics:\n" + json.spaces2)
+    logger.debug("Raw JSON input to convertToPrometheusMetrics:" + json.noSpaces)
     logger.debug("Extracted top-level zones from JSON: " + zones.size)
     zones.zipWithIndex.foreach { case (zoneJson, i) =>
       logger.debug(s"Zone[$i] JSON: " + zoneJson.noSpaces)

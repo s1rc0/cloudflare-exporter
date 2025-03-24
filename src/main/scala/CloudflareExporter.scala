@@ -18,6 +18,12 @@ object CloudflareExporter extends LazyLogging {
     implicit val system: ActorSystem[Nothing] = ActorSystem(Behaviors.empty, "CloudflareExporterSystem")
     implicit val executionContext: ExecutionContextExecutor = system.executionContext
 
+    import actors.DispatcherActor
+
+    val dispatcher = system.systemActorOf(DispatcherActor(), "dispatcher")
+    dispatcher ! DispatcherActor.Start
+    routes.Routes.setDispatcher(dispatcher)(system.scheduler)
+
     val bindingFuture = Http().newServerAt("0.0.0.0", 8080).bind(Routes.routes)
 
     bindingFuture.onComplete {
