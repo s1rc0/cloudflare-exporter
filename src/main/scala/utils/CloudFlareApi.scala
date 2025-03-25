@@ -95,10 +95,11 @@ object CloudFlareApi extends LazyLogging {
           case Right(jsonStr) =>
             parse(jsonStr) match {
               case Right(json) =>
+                logger.debug("Successfully retrieved rules for zone: " + zoneId + ": " + json.noSpaces)
                 val cursor = json.hcursor
                 val rules = cursor.downField("result").as[List[Json]].getOrElse(List.empty).map { rule =>
                   Map(
-                    "id" -> rule.hcursor.get[String]("id").getOrElse(""),
+                    "id" -> rule.hcursor.get[String]("ref").getOrElse(""),
                     "description" -> rule.hcursor.get[String]("description").getOrElse("")
                   )
                 }

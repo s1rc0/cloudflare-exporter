@@ -49,10 +49,14 @@ object Routes extends LazyLogging {
               onComplete(futureZones) {
                 case Success(zones) =>
                   if (zones.nonEmpty) {
-                  onComplete(CloudFlareGraphiQl.fetchFirewallEventsForZones(zones, startTime, endTime, dispatcher)) {
-                      case Success(json) =>
-                        val metrics = CloudFlareGraphiQl.convertToPrometheusMetrics(json)
-                        complete(HttpEntity(ContentTypes.`text/plain(UTF-8)`, metrics))
+                    val futureRules = dispatcher.ask(ref => DispatcherActor.GetRules(ref))
+                    onComplete(futureRules) {
+                      case Success(rulesByZone) =>
+                        onComplete(CloudFlareGraphiQl.fetchFirewallEventsForZones(zones, startTime, endTime, dispatcher)) {
+                          case Success(json) =>
+                            val metrics = CloudFlareGraphiQl.convertToPrometheusMetrics(json, rulesByZone)
+                            complete(HttpEntity(ContentTypes.`text/plain(UTF-8)`, metrics))
+                        }
                       case Failure(exception) =>
                         logger.error("Failed to fetch aggregated firewall events", exception)
                         complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching metrics"))

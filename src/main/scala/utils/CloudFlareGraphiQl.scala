@@ -122,7 +122,7 @@ object CloudFlareGraphiQl extends LazyLogging {
     }
   }
 
-  def convertToPrometheusMetrics(json: Json): String = {
+  def convertToPrometheusMetrics(json: Json, rulesByZone: Map[String, List[Map[String, String]]]): String = {
     val cursor = json.hcursor
     val zones = cursor.downField("data").as[Json].toOption.toList.flatMap(_.asArray.getOrElse(Vector.empty))
     logger.debug("Raw JSON input to convertToPrometheusMetrics:" + json.noSpaces)
@@ -152,8 +152,15 @@ object CloudFlareGraphiQl extends LazyLogging {
         ruleId <- topIp.hcursor.downField("dimensions").get[String]("ruleId").toOption
         source <- topIp.hcursor.downField("dimensions").get[String]("source").toOption
       } {
+          logger.debug(s"Looking up rule name for zoneId=$zoneId, ruleId=$ruleId")
+          logger.debug(s"Available rules for zone: ${rulesByZone.get(zoneId).getOrElse(Nil).map(_("id")).mkString(", ")}")
+          val ruleName = rulesByZone
+            .get(zoneId)
+            .flatMap(_.find(rule => rule.get("id").contains(ruleId)).flatMap(_.get("description")))
+            .getOrElse(ruleId)
+          logger.debug(s"Resolved rule name for ruleId=$ruleId: $ruleName")
         logger.debug(s"Preparing to create metrics for zone=$zoneName, action=$action, count=$count")
-        val metricLine = s"""cloudflare_top_ip_request_count{zone="$zoneName", action="$action", source="$source", rule="$ruleId"} $count"""
+        val metricLine = s"""cloudflare_top_ip_request_count{zone="$zoneName", action="$action", source="$source", rule="$ruleName"} $count"""
         metricsBuilder.append(metricLine + "\n")
       }
     }
