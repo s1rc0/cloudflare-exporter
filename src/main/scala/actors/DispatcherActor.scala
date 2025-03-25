@@ -16,6 +16,8 @@ object DispatcherActor extends LazyLogging {
   // Define messages (commands) the actor can handle
   sealed trait Command
   case object Start extends Command
+
+  final case class GetRules(replyTo: ActorRef[Map[String, List[Map[String, String]]]]) extends Command
   final case class GetZones(replyTo: ActorRef[List[Map[String, String]]], module: String = "firewall") extends Command
   final case class RemoveZone(module: String, zoneId: String) extends Command
 
@@ -23,6 +25,7 @@ object DispatcherActor extends LazyLogging {
     implicit val ec: ExecutionContext = context.executionContext
     implicit val timeout: Timeout = 5.seconds
 
+    var cachedFwRulesByZone: Map[String, List[Map[String, String]]] = Map.empty
     var cachedZonesByModule: Map[String, List[Map[String, String]]] = Map.empty
 
     def refreshZones(): Future[List[Map[String, String]]] = {
@@ -30,8 +33,20 @@ object DispatcherActor extends LazyLogging {
       CloudFlareApi.getZones().andThen {
         case Success(zones) =>
           log.info(s"✅ Refreshed zones: ${zones.map(_("zoneName")).mkString(", ")}")
-        cachedZonesByModule += ("firewall" -> zones)
-        cachedZonesByModule += ("all" -> zones)
+          cachedZonesByModule += ("firewall" -> zones)
+          cachedZonesByModule += ("all" -> zones)
+
+          // fetch rules for each zone
+          zones.foreach { zone =>
+            val zoneId = zone("zoneId")
+            CloudFlareApi.getRules(zoneId).onComplete {
+              case Success(rules) =>
+                cachedFwRulesByZone += (zoneId -> rules)
+                log.info(s"✅ Cached ${rules.size} rules for zone $zoneId")
+              case Failure(ex) =>
+                log.error(s"❌ Failed to fetch rules for zone $zoneId", ex)
+            }
+          }
         case Failure(ex) =>
           log.error("❌ Failed to refresh zones", ex)
       }
@@ -64,6 +79,10 @@ object DispatcherActor extends LazyLogging {
           case None         => None
         }
         context.log.info(s"🧹 Removed zone $zoneId from module '$module'")
+        Behaviors.same
+
+      case GetRules(replyTo) =>
+        replyTo ! cachedFwRulesByZone
         Behaviors.same
     }
   }

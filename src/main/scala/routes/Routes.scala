@@ -34,7 +34,7 @@ object Routes extends LazyLogging {
       },
       path("metrics") {
         get {
-          val startTime = java.time.Instant.now().minusSeconds(3600).toString
+          val startTime = java.time.Instant.now().minusSeconds(36000).toString
           val endTime = java.time.Instant.now().toString
 
           (schedulerRef, dispatcherRef) match {
@@ -160,6 +160,30 @@ object Routes extends LazyLogging {
                 case Failure(exception) =>
                   logger.error("Failed to fetch zones from dispatcher", exception)
                   complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching cached zones"))
+              }
+            case _ =>
+              complete(HttpResponse(StatusCodes.InternalServerError, entity = "Dispatcher not initialized"))
+          }
+        }
+      },
+      path("dispatcher" / "rules") {
+        get {
+          (schedulerRef, dispatcherRef) match {
+            case (Some(scheduler), Some(dispatcher)) =>
+              import org.apache.pekko.actor.typed.scaladsl.AskPattern._
+              import org.apache.pekko.util.Timeout
+              import scala.concurrent.duration._
+
+              implicit val timeout: Timeout = 5.seconds
+              implicit val s: org.apache.pekko.actor.typed.Scheduler = scheduler
+
+              val futureRules = dispatcher.ask(ref => DispatcherActor.GetRules(ref))
+              onComplete(futureRules) {
+                case Success(rules) =>
+                  complete(HttpEntity(ContentTypes.`application/json`, rules.asJson.noSpaces))
+                case Failure(exception) =>
+                  logger.error("Failed to fetch cached rules from dispatcher", exception)
+                  complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching cached rules"))
               }
             case _ =>
               complete(HttpResponse(StatusCodes.InternalServerError, entity = "Dispatcher not initialized"))

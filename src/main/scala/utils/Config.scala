@@ -12,6 +12,7 @@ object Config extends LazyLogging {
     .map(_.split(",").map(_.trim).toSet)
     .getOrElse(Set.empty)
   val graphqlEndpoint: String = "https://api.cloudflare.com/client/v4/graphql"
+  val disableFreePlanZones: Boolean = env.get("CLOUDFLARE_DISABLE_FREE_PLAN_ZONES").forall(_.toBoolean)
 
   def validate(): Unit = {
     if (apiToken.isEmpty || authEmail.isEmpty) {

@@ -73,7 +73,7 @@ object CloudFlareGraphiQl extends LazyLogging {
          |  viewer {
          |    zones(filter: {zoneTag: "$zoneId"}) {
          |      topIPs: firewallEventsAdaptiveGroups(
-         |        limit: 1,
+         |        limit: 100,
          |        filter:{
          |          datetime_geq: "$startTime",
          |          datetime_leq: "$endTime"

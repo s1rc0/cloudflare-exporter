@@ -11,9 +11,9 @@
         <appender-ref ref="STDOUT" />
     </appender>
 
-    <logger name="com.monitoring.cloudflare" level="INFO"/>
+    <logger name="com.monitoring.cloudflare" level="DEBUG"/>
 
-    <root level="INFO">
+    <root level="DEBUG">
         <appender-ref ref="ASYNC"/>
     </root>
 </configuration>
