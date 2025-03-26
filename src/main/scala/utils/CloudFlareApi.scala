@@ -81,6 +81,34 @@ object CloudFlareApi extends LazyLogging {
     fetchPage(1)
   }
 
+  def getRulesetRules(zoneId: String, phase: String)(implicit ec: ExecutionContext): Future[List[Map[String, Json]]] = {
+    val uri = uri"https://api.cloudflare.com/client/v4/zones/$zoneId/rulesets/phases/$phase/entrypoint"
+    val request = basicRequest
+      .get(uri)
+      .header("Authorization", s"Bearer ${Config.apiToken}")
+      .header("Content-Type", "application/json")
+      .response(asString)
+
+    Future {
+      val response = request.send(backend)
+      response.body match {
+        case Right(jsonStr) =>
+          parse(jsonStr) match {
+            case Right(json) =>
+              logger.debug(s"Successfully retrieved ruleset rules for zone $zoneId phase $phase: ${json.noSpaces}")
+              val rules = json.hcursor.downField("result").downField("rules").as[List[Json]].getOrElse(Nil)
+              rules.map(_.asObject.map(_.toMap).getOrElse(Map.empty))
+            case Left(error) =>
+              logger.error(s"Failed to parse ruleset rules JSON for zone $zoneId phase $phase: $error")
+              Nil
+          }
+        case Left(error) =>
+          logger.error(s"Failed to fetch ruleset rules for zone $zoneId phase $phase: $error")
+          Nil
+      }
+    }
+  }
+
   def getIpAccessRules(zoneId: String)(implicit ec: ExecutionContext): Future[List[Map[String, Json]]] = {
     def fetchPage(page: Int): Future[List[Map[String, Json]]] = {
       val request = basicRequest

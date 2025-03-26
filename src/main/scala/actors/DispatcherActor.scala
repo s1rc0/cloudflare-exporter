@@ -12,6 +12,7 @@ import utils.CloudFlareApi
 import utils.Config
 import scala.concurrent.ExecutionContext
 import io.circe.Json
+import io.circe.syntax._
 
 object DispatcherActor extends LazyLogging {
 
@@ -31,10 +32,8 @@ object DispatcherActor extends LazyLogging {
     var cachedFwRulesByZone: Map[String, Map[String, List[Map[String, Json]]]] = Map.empty
 
     def refreshZones(accountIds: Set[String], customZoneIdsOpt: Option[String]): Future[List[Map[String, String]]] = {
-      val ruleFetchFutures = scala.collection.mutable.ListBuffer[Future[Unit]]()
-
-      def fetchAllRules(zoneId: String): Unit = {
-        ruleFetchFutures ++= Seq(
+      def fetchAllRules(zoneId: String): Future[Unit] = {
+        val ruleFutures = Seq(
           CloudFlareApi.getRules(zoneId).map { rules =>
             val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
             cachedFwRulesByZone += (zoneId -> (existing + ("customRules" -> rules)))
@@ -56,33 +55,43 @@ object DispatcherActor extends LazyLogging {
             cachedFwRulesByZone += (zoneId -> (existing + ("ip_rules" -> rules)))
             logger.info(s"✅ Cached ${rules.size} IP access rules for zone $zoneId")
           },
-          CloudFlareApi.getRulesets(zoneId).map { rules =>
+          CloudFlareApi.getRulesets(zoneId).flatMap { rulesets =>
             val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
-            cachedFwRulesByZone += (zoneId -> (existing + ("rulesets" -> rules)))
-            logger.info(s"✅ Cached ${rules.size} rulesets for zone $zoneId")
+            cachedFwRulesByZone += (zoneId -> (existing + ("rulesets" -> rulesets)))
+            logger.info(s"✅ Cached ${rulesets.size} rulesets for zone $zoneId")
+
+            val rulesetRulesFutures = rulesets.flatMap(_.get("phase").flatMap(_.asString)).map { phase =>
+              CloudFlareApi.getRulesetRules(zoneId, phase).map { rules =>
+                val updated = cachedFwRulesByZone.getOrElse(zoneId, Map.empty) + (s"ruleset_rules_$phase" -> rules)
+                cachedFwRulesByZone += (zoneId -> updated)
+                logger.info(s"✅ Cached ${rules.size} ruleset rules for phase $phase in zone $zoneId")
+              }
+            }
+
+            Future.sequence(rulesetRulesFutures).map(_ => ())
           }
-        ).map(_.recover { case ex => logger.error(s"❌ Failed to fetch some rules for $zoneId", ex) })
+        )
+
+        Future.sequence(ruleFutures).map(_ => ())
       }
 
-      val zonesFuture: Future[List[Map[String, String]]] = customZoneIdsOpt match {
+      val zonesFuture = customZoneIdsOpt match {
         case Some(zonesStr) if zonesStr.nonEmpty =>
           val zonePairs = zonesStr.split(",").flatMap(_.split(":") match {
             case Array(name, id) => Some(Map("accountId" -> "", "accountName" -> "", "zoneId" -> id, "zoneName" -> name))
             case _ => None
           }).toList
           cachedZonesByModule += ("firewall" -> zonePairs, "all" -> zonePairs)
-          zonePairs.foreach(zone => fetchAllRules(zone("zoneId")))
-          Future.successful(zonePairs)
+          Future.sequence(zonePairs.map(z => fetchAllRules(z("zoneId")))).map(_ => zonePairs)
 
         case _ =>
-          CloudFlareApi.getZones().map { zones =>
+          CloudFlareApi.getZones().flatMap { zones =>
             cachedZonesByModule += ("firewall" -> zones, "all" -> zones)
-            zones.foreach(zone => fetchAllRules(zone("zoneId")))
-            zones
+            Future.sequence(zones.map(z => fetchAllRules(z("zoneId")))).map(_ => zones)
           }
       }
 
-      zonesFuture.flatMap(zs => Future.sequence(ruleFetchFutures.toList).map(_ => zs))
+      zonesFuture
     }
 
     Behaviors.receiveMessage {
@@ -96,6 +105,15 @@ object DispatcherActor extends LazyLogging {
                   case (module, rulesList) => s"  $module -> ${rulesList.size} rules"
                 }.mkString("\n")
             }.mkString("\n\n"))
+            import io.circe.generic.auto._
+            import io.circe.syntax._
+
+            val jsonSafeRules = cachedFwRulesByZone.map { case (zoneId, modules) =>
+              zoneId -> modules.map { case (module, rules) =>
+                module -> rules.map(_.asJson)
+              }
+            }
+            logger.info(s"📦 Raw cachedFwRulesByZone JSON:\n${jsonSafeRules.asJson.noSpaces}")
             replyTo ! cachedZonesByModule.getOrElse("firewall", Nil)
           case Failure(ex) =>
             context.log.error("❌ Initialization failed during Start", ex)
