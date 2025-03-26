@@ -81,6 +81,45 @@ object CloudFlareApi extends LazyLogging {
     fetchPage(1)
   }
 
+  def getIpAccessRules(zoneId: String)(implicit ec: ExecutionContext): Future[List[Map[String, Json]]] = {
+    def fetchPage(page: Int): Future[List[Map[String, Json]]] = {
+      val request = basicRequest
+        .get(uri"https://api.cloudflare.com/client/v4/zones/$zoneId/firewall/access_rules/rules?page=$page&per_page=50")
+        .header("Authorization", s"Bearer ${Config.apiToken}")
+        .header("X-Auth-Email", Config.authEmail)
+        .header("Content-Type", "application/json")
+        .response(asString)
+
+      Future {
+        val response = request.send(backend)
+        response.body match {
+          case Right(jsonStr) =>
+            parse(jsonStr) match {
+              case Right(json) =>
+                logger.debug(s"Successfully retrieved IP access rules for zone $zoneId (page $page): ${json.noSpaces}")
+                val cursor = json.hcursor
+                val rules = cursor.downField("result").as[List[Json]].getOrElse(List.empty)
+                  .map(_.asObject.get.toMap)
+                val totalPages = cursor.downField("result_info").downField("total_pages").as[Int].getOrElse(1)
+                if (page < totalPages) {
+                  fetchPage(page + 1).map(nextPage => rules ++ nextPage)
+                } else {
+                  Future.successful(rules)
+                }
+              case Left(parseError) =>
+                logger.error(s"Failed to parse IP access rules response for zone $zoneId", parseError)
+                throw parseError
+            }
+          case Left(error) =>
+            logger.error(s"Failed to fetch IP access rules for account $zoneId: $error")
+            throw new Exception(error)
+        }
+      }.flatten
+    }
+
+    fetchPage(1)
+  }
+
   def getRules(zoneId: String)(implicit ec: ExecutionContext): Future[List[Map[String, Json]]] = {
     def fetchPage(page: Int): Future[List[Map[String, Json]]] = {
       val request = basicRequest
@@ -164,5 +203,82 @@ object CloudFlareApi extends LazyLogging {
 
     fetchPage(1)
   }
+  def getUserAgentRules(zoneId: String)(implicit ec: ExecutionContext): Future[List[Map[String, Json]]] = {
+    def fetchPage(page: Int): Future[List[Map[String, Json]]] = {
+      val request = basicRequest
+        .get(uri"https://api.cloudflare.com/client/v4/zones/$zoneId/firewall/ua_rules?page=$page&per_page=50")
+        .header("Authorization", s"Bearer ${Config.apiToken}")
+        .header("X-Auth-Email", Config.authEmail)
+        .header("Content-Type", "application/json")
+        .response(asString)
 
+      Future {
+        val response = request.send(backend)
+        response.body match {
+          case Right(jsonStr) =>
+            parse(jsonStr) match {
+              case Right(json) =>
+                logger.debug(s"Successfully retrieved User-Agent rules for zone $zoneId (page $page): ${json.noSpaces}")
+                val cursor = json.hcursor
+                val rules = cursor.downField("result").as[List[Json]].getOrElse(List.empty)
+                  .map(_.asObject.get.toMap)
+                val totalPages = cursor.downField("result_info").downField("total_pages").as[Int].getOrElse(1)
+                if (page < totalPages) {
+                  fetchPage(page + 1).map(nextPage => rules ++ nextPage)
+                } else {
+                  Future.successful(rules)
+                }
+              case Left(parseError) =>
+                logger.error(s"Failed to parse User-Agent rules response for zone $zoneId", parseError)
+                throw parseError
+            }
+          case Left(error) =>
+            logger.error(s"Failed to fetch User-Agent rules for zone $zoneId: $error")
+            throw new Exception(error)
+        }
+      }.flatten
+    }
+
+    fetchPage(1)
+  }
+
+  def getRulesets(zoneId: String)(implicit ec: ExecutionContext): Future[List[Map[String, Json]]] = {
+    def fetchPage(page: Int): Future[List[Map[String, Json]]] = {
+      val baseUri = uri"https://api.cloudflare.com/client/v4/zones/$zoneId/rulesets?page=$page&per_page=50"
+
+      val request = basicRequest
+        .get(baseUri)
+        .header("Authorization", s"Bearer ${Config.apiToken}")
+        .header("Content-Type", "application/json")
+        .response(asString)
+
+      Future {
+        val response = request.send(backend)
+        response.body match {
+          case Right(jsonStr) =>
+            parse(jsonStr) match {
+              case Right(json) =>
+                logger.debug(s"Successfully retrieved rulesets for zone $zoneId (page $page): ${json.noSpaces}")
+                val cursor = json.hcursor
+                val rules = cursor.downField("result").as[List[Json]].getOrElse(List.empty).map(_.asObject.get.toMap)
+                val totalPages = cursor.downField("result_info").downField("total_pages").as[Int].getOrElse(1)
+                if (page < totalPages) {
+                  fetchPage(page + 1).map(next => rules ++ next)
+                } else {
+                  Future.successful(rules)
+                }
+              case Left(err) =>
+                logger.error(s"Failed to parse rulesets response for zone $zoneId", err)
+                throw err
+            }
+          case Left(err) =>
+            logger.error(s"Failed to fetch rulesets for zone $zoneId: $err")
+            throw new Exception(err)
+        }
+      }.flatten
+    }
+
+    fetchPage(1)
+  }
 }
+

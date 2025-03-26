@@ -20,17 +20,34 @@ object CloudflareExporter extends LazyLogging {
 
     import actors.DispatcherActor
 
+    import org.apache.pekko.actor.typed.scaladsl.AskPattern._
+    import org.apache.pekko.actor.typed.scaladsl.AskPattern.schedulerFromActorSystem
+    import org.apache.pekko.util.Timeout
+    import scala.concurrent.duration._
+
     val dispatcher = system.systemActorOf(DispatcherActor(), "dispatcher")
-    dispatcher ! DispatcherActor.Start
-    routes.Routes.setDispatcher(dispatcher)(system.scheduler)
+    implicit val timeout: Timeout = 60.seconds
+    // Removed implicit scheduler to use schedulerFromActorSystem instead
 
-    val bindingFuture = Http().newServerAt("0.0.0.0", 8080).bind(Routes.routes)
+    import scala.concurrent.Await
+    import scala.concurrent.duration._
 
-    bindingFuture.onComplete {
-      case Success(binding) =>
-        logger.info(s"Server online at http://${binding.localAddress.getHostString}:${binding.localAddress.getPort}/")
-      case Failure(exception) =>
-        logger.error(s"Failed to bind HTTP server: ${exception.getMessage}", exception)
+    try {
+      val result = Await.result(dispatcher.ask[List[Map[String, String]]](ref => DispatcherActor.Start(ref)), 5.minutes)
+      system.log.info("✅ Initialization finished. Starting HTTP server.")
+      Routes.setDispatcher(dispatcher)(schedulerFromActorSystem(system))
+      val bindingFuture = Http().newServerAt("0.0.0.0", 8080).bind(Routes.routes)
+
+      bindingFuture.onComplete {
+        case Success(binding) =>
+          logger.info(s"Server online at http://${binding.localAddress.getHostString}:${binding.localAddress.getPort}/")
+        case Failure(exception) =>
+          logger.error(s"Failed to bind HTTP server: ${exception.getMessage}", exception)
+          system.terminate()
+      }
+    } catch {
+      case ex: Throwable =>
+        logger.error(s"Startup initialization failed: ${ex.getMessage}", ex)
         system.terminate()
     }
   }

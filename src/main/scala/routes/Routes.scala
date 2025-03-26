@@ -89,7 +89,6 @@ object Routes extends LazyLogging {
 
               implicit val timeout: Timeout = 5.seconds
               implicit val s: org.apache.pekko.actor.typed.Scheduler = scheduler
-
               val futureZones = dispatcher.ask(ref => DispatcherActor.GetZones(ref, "firewall"))
               onComplete(futureZones) {
                 case Success(zones) =>
@@ -203,6 +202,91 @@ object Routes extends LazyLogging {
                 case Failure(ex) =>
                   logger.error("Failed to fetch rate limit rules", ex)
                   complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching rate limit rules"))
+              }
+            case _ =>
+              complete(HttpResponse(StatusCodes.InternalServerError, entity = "Dispatcher not initialized"))
+          }
+        }
+      }
+      ,
+      path("firewall" / "ua_rules") {
+        get {
+          (schedulerRef, dispatcherRef) match {
+            case (Some(scheduler), Some(dispatcher)) =>
+              import org.apache.pekko.actor.typed.scaladsl.AskPattern._
+              import org.apache.pekko.util.Timeout
+              import scala.concurrent.duration._
+              import io.circe.JsonObject
+
+              implicit val timeout: Timeout = 5.seconds
+              implicit val s: org.apache.pekko.actor.typed.Scheduler = scheduler
+
+              val futureRules = dispatcher.ask(ref => DispatcherActor.GetRules(ref))
+              onComplete(futureRules) {
+                case Success(rulesByZone) =>
+                  val uaRules = rulesByZone.view.mapValues(_.getOrElse("ua_rules", Nil)).toMap
+                    .mapValues(_.map(obj => Json.fromJsonObject(JsonObject.fromMap(obj))))
+                  val uaJsonified = uaRules.map { case (zoneId, rules) => zoneId -> Json.fromValues(rules) }
+                  complete(HttpEntity(ContentTypes.`application/json`, Json.fromFields(uaJsonified).noSpaces))
+                case Failure(ex) =>
+                  logger.error("Failed to fetch UA rules", ex)
+                  complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching UA rules"))
+              }
+            case _ =>
+              complete(HttpResponse(StatusCodes.InternalServerError, entity = "Dispatcher not initialized"))
+          }
+        }
+      },
+      path("firewall" / "ip_rules") {
+        get {
+          (schedulerRef, dispatcherRef) match {
+            case (Some(scheduler), Some(dispatcher)) =>
+              import org.apache.pekko.actor.typed.scaladsl.AskPattern._
+              import org.apache.pekko.util.Timeout
+              import scala.concurrent.duration._
+              import io.circe.JsonObject
+
+              implicit val timeout: Timeout = 5.seconds
+              implicit val s: org.apache.pekko.actor.typed.Scheduler = scheduler
+
+              val futureRules = dispatcher.ask(ref => DispatcherActor.GetRules(ref))
+              onComplete(futureRules) {
+                case Success(rulesByZone) =>
+                  val ipRules = rulesByZone.view.mapValues(_.getOrElse("ip_rules", Nil)).toMap
+                    .mapValues(_.map(obj => Json.fromJsonObject(JsonObject.fromMap(obj))))
+                  val ipJsonified = ipRules.map { case (zoneId, rules) => zoneId -> Json.fromValues(rules) }
+                  complete(HttpEntity(ContentTypes.`application/json`, Json.fromFields(ipJsonified).noSpaces))
+                case Failure(ex) =>
+                  logger.error("Failed to fetch IP access rules", ex)
+                  complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching IP access rules"))
+              }
+            case _ =>
+              complete(HttpResponse(StatusCodes.InternalServerError, entity = "Dispatcher not initialized"))
+          }
+        }
+      },
+      path("firewall" / "rulesets") {
+        get {
+          (schedulerRef, dispatcherRef) match {
+            case (Some(scheduler), Some(dispatcher)) =>
+              import org.apache.pekko.actor.typed.scaladsl.AskPattern._
+              import org.apache.pekko.util.Timeout
+              import scala.concurrent.duration._
+              import io.circe.JsonObject
+
+              implicit val timeout: Timeout = 5.seconds
+              implicit val s: org.apache.pekko.actor.typed.Scheduler = scheduler
+
+              val futureRules = dispatcher.ask(ref => DispatcherActor.GetRules(ref))
+              onComplete(futureRules) {
+                case Success(rulesByZone) =>
+                  val rulesets = rulesByZone.view.mapValues(_.getOrElse("rulesets", Nil)).toMap
+                    .mapValues(_.map(obj => Json.fromJsonObject(JsonObject.fromMap(obj))))
+                  val jsonified = rulesets.map { case (zoneId, rules) => zoneId -> Json.fromValues(rules) }
+                  complete(HttpEntity(ContentTypes.`application/json`, Json.fromFields(jsonified).noSpaces))
+                case Failure(ex) =>
+                  logger.error("Failed to fetch rulesets", ex)
+                  complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching rulesets"))
               }
             case _ =>
               complete(HttpResponse(StatusCodes.InternalServerError, entity = "Dispatcher not initialized"))

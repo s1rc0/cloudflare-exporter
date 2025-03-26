@@ -17,7 +17,7 @@ object DispatcherActor extends LazyLogging {
 
   // Define messages (commands) the actor can handle
   sealed trait Command
-  case object Start extends Command
+  final case class Start(replyTo: ActorRef[List[Map[String, String]]]) extends Command
 
   final case class GetRules(replyTo: ActorRef[Map[String, Map[String, List[Map[String, Json]]]]]) extends Command
   final case class GetZones(replyTo: ActorRef[List[Map[String, String]]], module: String = "firewall") extends Command
@@ -31,76 +31,76 @@ object DispatcherActor extends LazyLogging {
     var cachedFwRulesByZone: Map[String, Map[String, List[Map[String, Json]]]] = Map.empty
 
     def refreshZones(accountIds: Set[String], customZoneIdsOpt: Option[String]): Future[List[Map[String, String]]] = {
-      customZoneIdsOpt match {
+      val ruleFetchFutures = scala.collection.mutable.ListBuffer[Future[Unit]]()
+
+      def fetchAllRules(zoneId: String): Unit = {
+        ruleFetchFutures ++= Seq(
+          CloudFlareApi.getRules(zoneId).map { rules =>
+            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
+            cachedFwRulesByZone += (zoneId -> (existing + ("customRules" -> rules)))
+            logger.info(s"✅ Cached ${rules.size} firewall rules for zone $zoneId")
+          },
+          CloudFlareApi.getRateLimitRules(zoneId).map { rules =>
+            val converted = rules.map(_.map { case (k, v) => (k, Json.fromString(v)) })
+            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
+            cachedFwRulesByZone += (zoneId -> (existing + ("rate_limit" -> converted)))
+            logger.info(s"✅ Cached ${rules.size} rate limit rules for zone $zoneId")
+          },
+          CloudFlareApi.getUserAgentRules(zoneId).map { rules =>
+            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
+            cachedFwRulesByZone += (zoneId -> (existing + ("ua_rules" -> rules)))
+            logger.info(s"✅ Cached ${rules.size} UA rules for zone $zoneId")
+          },
+          CloudFlareApi.getIpAccessRules(zoneId).map { rules =>
+            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
+            cachedFwRulesByZone += (zoneId -> (existing + ("ip_rules" -> rules)))
+            logger.info(s"✅ Cached ${rules.size} IP access rules for zone $zoneId")
+          },
+          CloudFlareApi.getRulesets(zoneId).map { rules =>
+            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
+            cachedFwRulesByZone += (zoneId -> (existing + ("rulesets" -> rules)))
+            logger.info(s"✅ Cached ${rules.size} rulesets for zone $zoneId")
+          }
+        ).map(_.recover { case ex => logger.error(s"❌ Failed to fetch some rules for $zoneId", ex) })
+      }
+
+      val zonesFuture: Future[List[Map[String, String]]] = customZoneIdsOpt match {
         case Some(zonesStr) if zonesStr.nonEmpty =>
           val zonePairs = zonesStr.split(",").flatMap(_.split(":") match {
-            case Array(name, id) =>
-              Some(Map("accountId" -> "", "accountName" -> "", "zoneId" -> id, "zoneName" -> name))
+            case Array(name, id) => Some(Map("accountId" -> "", "accountName" -> "", "zoneId" -> id, "zoneName" -> name))
             case _ => None
           }).toList
-
-          cachedZonesByModule += ("all" -> zonePairs, "firewall" -> zonePairs)
-
-          zonePairs.foreach { zone =>
-            val zoneId = zone("zoneId")
-            CloudFlareApi.getRules(zoneId).onComplete {
-              case Success(rules) =>
-                val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
-                cachedFwRulesByZone += (zoneId -> (existing + ("customRules" -> rules)))
-                logger.info(s"✅ Cached ${rules.size} firewall rules for zone $zoneId")
-              case Failure(ex) =>
-                logger.error(s"❌ Failed to fetch firewall rules for zone $zoneId", ex)
-            }
-            CloudFlareApi.getRateLimitRules(zoneId).onComplete {
-              case Success(rules) =>
-                val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
-                val convertedJson = rules.map(_.map { case (k, v) => (k, Json.fromString(v)) })
-                cachedFwRulesByZone += (zoneId -> (existing + ("rate_limit" -> convertedJson)))
-                logger.info(s"✅ Cached ${rules.size} rate limit rules for zone $zoneId")
-              case Failure(ex) =>
-                logger.error(s"❌ Failed to fetch rate limit rules for zone $zoneId", ex)
-            }
-          }
+          cachedZonesByModule += ("firewall" -> zonePairs, "all" -> zonePairs)
+          zonePairs.foreach(zone => fetchAllRules(zone("zoneId")))
           Future.successful(zonePairs)
 
-        case _ if accountIds.nonEmpty =>
-          CloudFlareApi.getZones().andThen {
-            case Success(zones) =>
-              logger.info(s"✅ Refreshed zones: ${zones.map(_("zoneName")).mkString(", ")}")
-              cachedZonesByModule += ("firewall" -> zones, "all" -> zones)
-
-              zones.foreach { zone =>
-                val zoneId = zone("zoneId")
-                CloudFlareApi.getRules(zoneId).onComplete {
-                  case Success(rules) =>
-                    val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
-                    val converted = rules.map(_.map { case (k, v) => (k, Json.fromString(v.toString)) })
-                    cachedFwRulesByZone += (zoneId -> (existing + ("customRules" -> converted)))
-                    logger.info(s"✅ Cached ${rules.size} firewall rules for zone $zoneId")
-                  case Failure(ex) =>
-                    logger.error(s"❌ Failed to fetch firewall rules for zone $zoneId", ex)
-                }
-
-                CloudFlareApi.getRateLimitRules(zoneId).onComplete {
-                  case Success(rules) =>
-                    val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
-                    val convertedJson = rules.map(_.map { case (k, v) => (k, Json.fromString(v)) })
-                    cachedFwRulesByZone += (zoneId -> (existing + ("rate_limit" -> convertedJson)))
-                    logger.info(s"✅ Cached ${rules.size} rate limit rules for zone $zoneId")
-                  case Failure(ex) =>
-                    logger.error(s"❌ Failed to fetch rate limit rules for zone $zoneId", ex)
-                }
-              }
-            case Failure(ex) =>
-              logger.error("❌ Failed to refresh zones", ex)
+        case _ =>
+          CloudFlareApi.getZones().map { zones =>
+            cachedZonesByModule += ("firewall" -> zones, "all" -> zones)
+            zones.foreach(zone => fetchAllRules(zone("zoneId")))
+            zones
           }
       }
+
+      zonesFuture.flatMap(zs => Future.sequence(ruleFetchFutures.toList).map(_ => zs))
     }
 
     Behaviors.receiveMessage {
-      case Start =>
+      case Start(replyTo) =>
         context.log.info("🚀 DispatcherActor received START command")
-        refreshZones(Config.accountIds, Config.customZoneIds)
+        refreshZones(Config.accountIds, Config.customZoneIds).onComplete {
+          case Success(_) =>
+            logger.info(s"📦 Final cachedFwRulesByZone content:\n" + cachedFwRulesByZone.map {
+              case (zoneId, modules) =>
+                s"$zoneId:\n" + modules.map {
+                  case (module, rulesList) => s"  $module -> ${rulesList.size} rules"
+                }.mkString("\n")
+            }.mkString("\n\n"))
+            replyTo ! cachedZonesByModule.getOrElse("firewall", Nil)
+          case Failure(ex) =>
+            context.log.error("❌ Initialization failed during Start", ex)
+            replyTo ! cachedZonesByModule.getOrElse("firewall", Nil)
+        }
         Behaviors.same
 
       case GetZones(replyTo, module) =>
