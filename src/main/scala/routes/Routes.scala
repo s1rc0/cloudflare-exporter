@@ -54,7 +54,13 @@ object Routes extends LazyLogging {
                       case Success(rulesByZone) =>
                         onComplete(CloudFlareGraphiQl.fetchFirewallEventsForZones(zones, startTime, endTime, dispatcher)) {
                           case Success(json) =>
-                            val metrics = CloudFlareGraphiQl.convertToPrometheusMetrics(json, rulesByZone)
+                        val flatRulesByZone: Map[String, List[Map[String, String]]] = rulesByZone.map { case (zoneId, moduleMap) =>
+                              val simplifiedRules = moduleMap.values.flatten.toList.map(_.collect {
+                                case (k, v) if v.isString => (k, v.asString.getOrElse(""))
+                              })
+                              zoneId -> simplifiedRules
+                            }
+                        val metrics = CloudFlareGraphiQl.convertToPrometheusMetrics(json, flatRulesByZone)
                             complete(HttpEntity(ContentTypes.`text/plain(UTF-8)`, metrics))
                         }
                       case Failure(exception) =>
@@ -70,32 +76,6 @@ object Routes extends LazyLogging {
               }
             case (None, _) | (_, None) =>
               complete(HttpResponse(StatusCodes.InternalServerError, entity = "Dispatcher not initialized"))
-          }
-        }
-      },
-      path("test") {
-        get {
-          val startTime = "2025-03-19T16:00:00Z"
-          val endTime = "2025-03-19T17:00:00Z"
-
-          onComplete(CloudFlareApi.getZones()) {
-            case Success(zones) =>
-              logger.info("Fetched zones successfully. Zones: " + zones.mkString(", "))
-              if (zones.nonEmpty) {
-                onComplete(CloudFlareGraphiQl.fetchFirewallEventsForZones(zones, startTime, endTime, dispatcherRef.get)) {
-                  case Success(json) =>
-                    complete(HttpEntity(ContentTypes.`application/json`, json.spaces2))
-                  case Failure(exception) =>
-                    logger.error("Failed to fetch aggregated firewall events", exception)
-                    complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching aggregated firewall events"))
-                }
-              } else {
-                complete(HttpResponse(StatusCodes.BadRequest, entity = "No active zones found"))
-              }
-
-            case Failure(exception) =>
-              logger.error("Failed to fetch zones", exception)
-              complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching zones"))
           }
         }
       },
@@ -170,24 +150,59 @@ object Routes extends LazyLogging {
           }
         }
       },
-      path("dispatcher" / "rules") {
+      // /firewall/custom_rules
+      path("firewall" / "custom_rules") {
         get {
           (schedulerRef, dispatcherRef) match {
             case (Some(scheduler), Some(dispatcher)) =>
               import org.apache.pekko.actor.typed.scaladsl.AskPattern._
               import org.apache.pekko.util.Timeout
               import scala.concurrent.duration._
+              import io.circe.JsonObject
 
               implicit val timeout: Timeout = 5.seconds
               implicit val s: org.apache.pekko.actor.typed.Scheduler = scheduler
 
               val futureRules = dispatcher.ask(ref => DispatcherActor.GetRules(ref))
               onComplete(futureRules) {
-                case Success(rules) =>
-                  complete(HttpEntity(ContentTypes.`application/json`, rules.asJson.noSpaces))
-                case Failure(exception) =>
-                  logger.error("Failed to fetch cached rules from dispatcher", exception)
-                  complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching cached rules"))
+                case Success(rulesByZone) =>
+                        val customRulesOnly = rulesByZone.view.mapValues(_.getOrElse("customRules", Nil)).toMap
+                            .mapValues(_.map(obj => Json.fromJsonObject(JsonObject.fromMap(obj))))
+                        val jsonified = customRulesOnly.map { case (zoneId, rules) => zoneId -> Json.fromValues(rules) }
+                        complete(HttpEntity(ContentTypes.`application/json`, Json.fromFields(jsonified).noSpaces))
+                case Failure(ex) =>
+                  logger.error("Failed to fetch custom rules", ex)
+                  complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching custom rules"))
+              }
+            case _ =>
+              complete(HttpResponse(StatusCodes.InternalServerError, entity = "Dispatcher not initialized"))
+          }
+        }
+      },
+
+      // /firewall_http_ratelimit
+      path("firewall" / "rate_limit_rules") {
+        get {
+          (schedulerRef, dispatcherRef) match {
+            case (Some(scheduler), Some(dispatcher)) =>
+              import org.apache.pekko.actor.typed.scaladsl.AskPattern._
+              import org.apache.pekko.util.Timeout
+              import scala.concurrent.duration._
+              import io.circe.JsonObject
+
+              implicit val timeout: Timeout = 5.seconds
+              implicit val s: org.apache.pekko.actor.typed.Scheduler = scheduler
+
+              val futureRules = dispatcher.ask(ref => DispatcherActor.GetRules(ref))
+              onComplete(futureRules) {
+                case Success(rulesByZone) =>
+                  val rateLimitRules = rulesByZone.view.mapValues(_.getOrElse("rate_limit", Nil)).toMap
+                    .mapValues(_.map(obj => Json.fromJsonObject(JsonObject.fromMap(obj))))
+                  val rateLimitJsonified = rateLimitRules.map { case (zoneId, rules) => zoneId -> Json.fromValues(rules) }
+                  complete(HttpEntity(ContentTypes.`application/json`, Json.fromFields(rateLimitJsonified).noSpaces))
+                case Failure(ex) =>
+                  logger.error("Failed to fetch rate limit rules", ex)
+                  complete(HttpResponse(StatusCodes.InternalServerError, entity = "Error fetching rate limit rules"))
               }
             case _ =>
               complete(HttpResponse(StatusCodes.InternalServerError, entity = "Dispatcher not initialized"))

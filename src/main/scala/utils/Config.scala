@@ -8,6 +8,7 @@ import scala.sys.env
 object Config extends LazyLogging {
   val apiToken: String = env.getOrElse("CLOUDFLARE_API_TOKEN", "")
   val authEmail: String = env.getOrElse("CLOUDFLARE_AUTH_EMAIL", "")
+  val customZoneIds: Option[String] = sys.env.get("CLOUDFLARE_ZONES_IDS")
   val accountIds: Set[String] = env.get("CLOUDFLARE_ACCOUNT_ID")
     .map(_.split(",").map(_.trim).toSet)
     .getOrElse(Set.empty)
