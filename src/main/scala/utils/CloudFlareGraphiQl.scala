@@ -73,7 +73,7 @@ object CloudFlareGraphiQl extends LazyLogging {
          |  viewer {
          |    zones(filter: {zoneTag: "$zoneId"}) {
          |      topIPs: firewallEventsAdaptiveGroups(
-         |        limit: 100,
+         |        limit: 1000,
          |        filter:{
          |          datetime_geq: "$startTime",
          |          datetime_leq: "$endTime"
@@ -86,6 +86,7 @@ object CloudFlareGraphiQl extends LazyLogging {
          |          action
          |          ruleId
          |          source
+         |          clientCountryName
          |        }
          |      }
          |    }
@@ -135,23 +136,25 @@ object CloudFlareGraphiQl extends LazyLogging {
 
     zones.foreach { zoneJson =>
       val zoneCursor = zoneJson.hcursor
-    val nestedZones = zoneCursor.downField("data").downField("viewer").downField("zones").as[List[Json]].getOrElse(Nil)
-    logger.debug(s"Nested zones count: " + nestedZones.size)
-    nestedZones.foreach { nestedZone =>
-      val nestedCursor = nestedZone.hcursor
-      val zoneIdOpt = nestedCursor.get[String]("zoneId").toOption
-      val zoneNameOpt = nestedCursor.get[String]("zoneName").toOption
-      val topIpsList = nestedCursor.downField("topIPs").as[List[Json]].getOrElse(Nil)
+      val nestedZones = zoneCursor.downField("data").downField("viewer").downField("zones").as[List[Json]].getOrElse(Nil)
+      logger.debug(s"Nested zones count: " + nestedZones.size)
 
-      for {
-        zoneId <- zoneIdOpt.toList
-        zoneName <- zoneNameOpt.toList
-        topIp <- topIpsList
-        count <- topIp.hcursor.get[Int]("count").toOption
-        action <- topIp.hcursor.downField("dimensions").get[String]("action").toOption
-        ruleId <- topIp.hcursor.downField("dimensions").get[String]("ruleId").toOption
-        source <- topIp.hcursor.downField("dimensions").get[String]("source").toOption
-      } {
+      nestedZones.foreach { nestedZone =>
+        val nestedCursor = nestedZone.hcursor
+        val zoneIdOpt = nestedCursor.get[String]("zoneId").toOption
+        val zoneNameOpt = nestedCursor.get[String]("zoneName").toOption
+        val topIpsList = nestedCursor.downField("topIPs").as[List[Json]].getOrElse(Nil)
+
+        for {
+          zoneId <- zoneIdOpt.toList
+          zoneName <- zoneNameOpt.toList
+          topIp <- topIpsList
+          count <- topIp.hcursor.get[Int]("count").toOption
+          action <- topIp.hcursor.downField("dimensions").get[String]("action").toOption
+          ruleId <- topIp.hcursor.downField("dimensions").get[String]("ruleId").toOption
+          source <- topIp.hcursor.downField("dimensions").get[String]("source").toOption
+          clientCountryName <- topIp.hcursor.downField("dimensions").get[String]("clientCountryName").toOption
+        } {
           logger.debug(s"Looking up rule name for zoneId=$zoneId, ruleId=$ruleId")
           logger.debug(s"Available rules for zone: ${rulesByZone.get(zoneId).getOrElse(Nil).map(_("id")).mkString(", ")}")
           val ruleName = rulesByZone
@@ -159,11 +162,11 @@ object CloudFlareGraphiQl extends LazyLogging {
             .flatMap(_.find(rule => rule.get("id").contains(ruleId)).flatMap(_.get("description")))
             .getOrElse(ruleId)
           logger.debug(s"Resolved rule name for ruleId=$ruleId: $ruleName")
-        logger.debug(s"Preparing to create metrics for zone=$zoneName, action=$action, count=$count")
-        val metricLine = s"""cloudflare_top_ip_request_count{zone="$zoneName", action="$action", source="$source", rule="$ruleName"} $count"""
-        metricsBuilder.append(metricLine + "\n")
+          logger.debug(s"Preparing to create metrics for zone=$zoneName, action=$action, count=$count")
+          val metricLine = s"""cloudflare_top_ip_request_count{zone="$zoneName", action="$action", source="$source", source="$clientCountryName", rule="$ruleName"} $count"""
+          metricsBuilder.append(metricLine + "\n")
+        }
       }
-    }
     }
 
     logger.info(s"Generated metrics with length: ${metricsBuilder.length}")
