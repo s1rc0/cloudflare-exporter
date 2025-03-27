@@ -19,7 +19,6 @@ object DispatcherActor extends LazyLogging {
   // Define messages (commands) the actor can handle
   sealed trait Command
   final case class Start(replyTo: ActorRef[List[Map[String, String]]]) extends Command
-
   final case class GetRules(replyTo: ActorRef[Map[String, Map[String, List[Map[String, Json]]]]]) extends Command
   final case class GetZones(replyTo: ActorRef[List[Map[String, String]]], module: String = "firewall") extends Command
   final case class RemoveZone(module: String, zoneId: String) extends Command
@@ -34,41 +33,36 @@ object DispatcherActor extends LazyLogging {
     def refreshZones(accountIds: Set[String], customZoneIdsOpt: Option[String]): Future[List[Map[String, String]]] = {
       def fetchAllRules(zoneId: String): Future[Unit] = {
         val ruleFutures = Seq(
-          CloudFlareApi.getRules(zoneId).map { rules =>
-            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
-            cachedFwRulesByZone += (zoneId -> (existing + ("customRules" -> rules)))
-            logger.info(s"✅ Cached ${rules.size} firewall rules for zone $zoneId")
-          },
-          CloudFlareApi.getRateLimitRules(zoneId).map { rules =>
-            val converted = rules.map(_.map { case (k, v) => (k, Json.fromString(v)) })
-            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
-            cachedFwRulesByZone += (zoneId -> (existing + ("rate_limit" -> converted)))
-            logger.info(s"✅ Cached ${rules.size} rate limit rules for zone $zoneId")
-          },
-          CloudFlareApi.getUserAgentRules(zoneId).map { rules =>
-            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
-            cachedFwRulesByZone += (zoneId -> (existing + ("ua_rules" -> rules)))
-            logger.info(s"✅ Cached ${rules.size} UA rules for zone $zoneId")
-          },
-          CloudFlareApi.getIpAccessRules(zoneId).map { rules =>
-            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
-            cachedFwRulesByZone += (zoneId -> (existing + ("ip_rules" -> rules)))
-            logger.info(s"✅ Cached ${rules.size} IP access rules for zone $zoneId")
-          },
+//          CloudFlareApi.getRules(zoneId).map { rules =>
+//            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
+//            cachedFwRulesByZone += (zoneId -> (existing + ("customRules" -> rules)))
+//            logger.info(s"✅ Cached ${rules.size} firewall rules for zone $zoneId")
+//          },
+//          CloudFlareApi.getUserAgentRules(zoneId).map { rules =>
+//            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
+//            cachedFwRulesByZone += (zoneId -> (existing + ("ua_rules" -> rules)))
+//            logger.info(s"✅ Cached ${rules.size} UA rules for zone $zoneId")
+//          },
+//          CloudFlareApi.getIpAccessRules(zoneId).map { rules =>
+//            val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
+//            cachedFwRulesByZone += (zoneId -> (existing + ("ip_rules" -> rules)))
+//            logger.info(s"✅ Cached ${rules.size} IP access rules for zone $zoneId")
+//          },
           CloudFlareApi.getRulesets(zoneId).flatMap { rulesets =>
             val existing = cachedFwRulesByZone.getOrElse(zoneId, Map.empty)
             cachedFwRulesByZone += (zoneId -> (existing + ("rulesets" -> rulesets)))
             logger.info(s"✅ Cached ${rulesets.size} rulesets for zone $zoneId")
 
-            val rulesetRulesFutures = rulesets.flatMap(_.get("phase").flatMap(_.asString)).map { phase =>
-              CloudFlareApi.getRulesetRules(zoneId, phase).map { rules =>
-                val updated = cachedFwRulesByZone.getOrElse(zoneId, Map.empty) + (s"ruleset_rules_$phase" -> rules)
-                cachedFwRulesByZone += (zoneId -> updated)
-                logger.info(s"✅ Cached ${rules.size} ruleset rules for phase $phase in zone $zoneId")
+            CloudFlareApi.getRulesetRules(zoneId, rulesets).map { phaseRules =>
+              logger.info("Processing ruleset phase rules " + phaseRules.map { case (p, r) => s"$p -> ${r.size}" }.mkString(", "))
+              val updated = phaseRules.foldLeft(cachedFwRulesByZone.getOrElse(zoneId, Map.empty)) {
+                case (acc, (phase, rules)) =>
+                  val existingRules = acc.getOrElse(phase, Nil)
+                  acc.updated(phase, existingRules ++ rules)
               }
+              cachedFwRulesByZone += (zoneId -> updated)
+              logger.info(s"✅ Cached ruleset rules for zone $zoneId by phase: ${phaseRules.map { case (p, r) => s"$p -> ${r.size}" }.mkString(", ")}")
             }
-
-            Future.sequence(rulesetRulesFutures).map(_ => ())
           }
         )
 
@@ -96,7 +90,7 @@ object DispatcherActor extends LazyLogging {
 
     Behaviors.receiveMessage {
       case Start(replyTo) =>
-        context.log.info("🚀 DispatcherActor received START command")
+      logger.info("🚀 DispatcherActor received START command")
         refreshZones(Config.accountIds, Config.customZoneIds).onComplete {
           case Success(_) =>
             logger.info(s"📦 Final cachedFwRulesByZone content:\n" + cachedFwRulesByZone.map {
@@ -116,7 +110,7 @@ object DispatcherActor extends LazyLogging {
             logger.info(s"📦 Raw cachedFwRulesByZone JSON:\n${jsonSafeRules.asJson.noSpaces}")
             replyTo ! cachedZonesByModule.getOrElse("firewall", Nil)
           case Failure(ex) =>
-            context.log.error("❌ Initialization failed during Start", ex)
+            logger.error("❌ Initialization failed during Start", ex)
             replyTo ! cachedZonesByModule.getOrElse("firewall", Nil)
         }
         Behaviors.same

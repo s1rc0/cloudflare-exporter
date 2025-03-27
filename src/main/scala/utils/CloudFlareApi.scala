@@ -81,32 +81,56 @@ object CloudFlareApi extends LazyLogging {
     fetchPage(1)
   }
 
-  def getRulesetRules(zoneId: String, phase: String)(implicit ec: ExecutionContext): Future[List[Map[String, Json]]] = {
-    val uri = uri"https://api.cloudflare.com/client/v4/zones/$zoneId/rulesets/phases/$phase/entrypoint"
-    val request = basicRequest
-      .get(uri)
-      .header("Authorization", s"Bearer ${Config.apiToken}")
-      .header("Content-Type", "application/json")
-      .response(asString)
+  def getRulesetRules(zoneId: String, rulesets: List[Map[String, Json]])(implicit ec: ExecutionContext): Future[List[(String, List[Map[String, Json]])]] = {
+    val futures: List[Future[(String, List[Map[String, Json]])]] = rulesets.flatMap { ruleset =>
+      for {
+        id <- ruleset.get("id").flatMap(_.asString)
+        phase <- ruleset.get("phase").flatMap(_.asString)
+      } yield {
+        val uri = uri"https://api.cloudflare.com/client/v4/zones/$zoneId/rulesets/$id"
+        val request = basicRequest
+          .get(uri)
+          .header("Authorization", s"Bearer ${Config.apiToken}")
+          .header("Content-Type", "application/json")
+          .response(asString)
 
-    Future {
-      val response = request.send(backend)
-      response.body match {
-        case Right(jsonStr) =>
-          parse(jsonStr) match {
-            case Right(json) =>
-              logger.debug(s"Successfully retrieved ruleset rules for zone $zoneId phase $phase: ${json.noSpaces}")
-              val rules = json.hcursor.downField("result").downField("rules").as[List[Json]].getOrElse(Nil)
-              rules.map(_.asObject.map(_.toMap).getOrElse(Map.empty))
+        Future {
+          val response = request.send(backend)
+          response.body match {
+            case Right(jsonStr) =>
+              parse(jsonStr) match {
+                case Right(json) =>
+                  val cursor = json.hcursor
+                  val success = cursor.downField("success").as[Boolean].getOrElse(false)
+                  if (!success) {
+                    val errorMsgs = cursor.downField("errors").as[List[Json]].getOrElse(Nil)
+                    val unauthorized = errorMsgs.exists(_.hcursor.get[String]("message").toOption.contains("request is not authorized"))
+                    val message = s"⚠️ Skipping ruleset $id for zone $zoneId due to fetch error: ${jsonStr}"
+                    if (unauthorized) {
+                      logger.warn(s"⚠️ Unauthorized: $message")
+                    } else {
+                      logger.warn(s"⚠️ $message")
+                    }
+                    (phase, List.empty[Map[String, Json]])
+                  } else {
+                    logger.debug(s"Successfully retrieved ruleset rules for zone $zoneId ruleset $id: ${json.noSpaces}")
+                    val rules = cursor.downField("result").downField("rules").as[List[Json]].getOrElse(Nil)
+                    val mapped = rules.map(_.asObject.map(_.toMap).getOrElse(Map.empty))
+                    (phase, mapped)
+                  }
+                case Left(error) =>
+                  logger.warn(s"Skipping ruleset $id for zone $zoneId due to parse error: ${error.getMessage}")
+                  (phase, List.empty[Map[String, Json]])
+              }
             case Left(error) =>
-              logger.error(s"Failed to parse ruleset rules JSON for zone $zoneId phase $phase: $error")
-              Nil
+              logger.warn(s"Skipping ruleset $id for zone $zoneId due to fetch error: $error")
+              (phase, List.empty[Map[String, Json]])
           }
-        case Left(error) =>
-          logger.error(s"Failed to fetch ruleset rules for zone $zoneId phase $phase: $error")
-          Nil
+        }
       }
     }
+
+    Future.sequence(futures)
   }
 
   def getIpAccessRules(zoneId: String)(implicit ec: ExecutionContext): Future[List[Map[String, Json]]] = {
@@ -187,50 +211,7 @@ object CloudFlareApi extends LazyLogging {
 
     fetchPage(1)
   }
-  def getRateLimitRules(zoneId: String)(implicit ec: ExecutionContext): Future[List[Map[String, String]]] = {
-    def fetchPage(page: Int): Future[List[Map[String, String]]] = {
-      val request = basicRequest
-        .get(uri"https://api.cloudflare.com/client/v4/zones/$zoneId/rate_limits?page=$page&per_page=50")
-        .header("Authorization", s"Bearer ${Config.apiToken}")
-        .header("Content-Type", "application/json")
-        .response(asString)
 
-      Future {
-        val response = request.send(backend)
-        response.body match {
-          case Right(jsonStr) =>
-            parse(jsonStr) match {
-              case Right(json) =>
-                logger.debug(s"Successfully retrieved rate limit rules for zone $zoneId: ${json.noSpaces}")
-                val cursor = json.hcursor
-                val rules = cursor.downField("result").as[List[Json]].getOrElse(List.empty).map { rule =>
-                  Map(
-                    "id" -> rule.hcursor.get[String]("id").getOrElse(""),
-                    "description" -> rule.hcursor.get[String]("description").getOrElse("")
-                  )
-                }
-
-                val totalPages = cursor.downField("result_info").downField("total_pages").as[Int].getOrElse(1)
-                if (page < totalPages) {
-                  fetchPage(page + 1).map(nextPage => rules ++ nextPage)
-                } else {
-                  Future.successful(rules)
-                }
-
-              case Left(parseError) =>
-                logger.error(s"Failed to parse rate limit rules response for zone $zoneId", parseError)
-                throw parseError
-            }
-
-          case Left(error) =>
-            logger.error(s"Failed to fetch rate limit rules for zone $zoneId: $error")
-            throw new Exception(error)
-        }
-      }.flatten
-    }
-
-    fetchPage(1)
-  }
   def getUserAgentRules(zoneId: String)(implicit ec: ExecutionContext): Future[List[Map[String, Json]]] = {
     def fetchPage(page: Int): Future[List[Map[String, Json]]] = {
       val request = basicRequest

@@ -27,10 +27,8 @@ object CloudflareExporter extends LazyLogging {
 
     val dispatcher = system.systemActorOf(DispatcherActor(), "dispatcher")
     implicit val timeout: Timeout = 60.seconds
-    // Removed implicit scheduler to use schedulerFromActorSystem instead
 
     import scala.concurrent.Await
-    import scala.concurrent.duration._
 
     try {
       val result = Await.result(dispatcher.ask[List[Map[String, String]]](ref => DispatcherActor.Start(ref)), 5.minutes)

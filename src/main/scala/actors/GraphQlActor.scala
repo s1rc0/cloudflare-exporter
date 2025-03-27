@@ -11,7 +11,7 @@ import io.circe.Json
 object GraphQlActor extends LazyLogging {
 
   sealed trait Command
-  final case class FetchFirewallMetrics(
+  private final case class FetchFirewallMetrics(
                                          zones: List[Map[String, String]],
                                          startTime: String,
                                          endTime: String,
