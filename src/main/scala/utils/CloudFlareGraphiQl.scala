@@ -163,7 +163,7 @@ object CloudFlareGraphiQl extends LazyLogging {
             .getOrElse(ruleId)
           logger.debug(s"Resolved rule name for ruleId=$ruleId: $ruleName")
           logger.debug(s"Preparing to create metrics for zone=$zoneName, action=$action, count=$count")
-          val metricLine = s"""cloudflare_top_ip_request_count{zone="$zoneName", action="$action", source="$source", source="$clientCountryName", rule="$ruleName"} $count"""
+          val metricLine = s"""cloudflare_top_ip_request_count{zone="$zoneName", action="$action", source="$source", clientCountryName="$clientCountryName", rule="$ruleName"} $count"""
           metricsBuilder.append(metricLine + "\n")
         }
       }
