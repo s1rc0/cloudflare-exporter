@@ -34,7 +34,7 @@ object Routes extends LazyLogging {
       },
       path("metrics") {
         get {
-          val startTime = java.time.Instant.now().minusSeconds(60).toString
+          val startTime = java.time.Instant.now().minusSeconds(300).toString
           val endTime = java.time.Instant.now().toString
 
           (schedulerRef, dispatcherRef) match {
